@@ -1,0 +1,132 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+body {
+  font-family: Lato, "Lucida Sans Unicode", "Lucida Grande", sans-serif;
+  font-size: 0.95rem;
+  font-weight: 400;
+  color: #202122;
+  line-height: 1.4rem;
+  letter-spacing: 0.01rem;
+}
+/* Custom scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  background-color: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: #888; 
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background-color: transparent;
+}
+
+/* Firefox scrollbar styling */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #888 transparent;
+}
+
+/* Question selection scrollbar */
+.grid::-webkit-scrollbar {
+  width: 6px;
+}
+
+.grid::-webkit-scrollbar-thumb {
+  background-color: #cbd5e1;
+  border-radius: 3px;
+}
+
+.grid::-webkit-scrollbar-track {
+  background-color: #f1f5f9;
+}
+
+/* Answer option hover effect */
+.answer-option {
+  @apply transition-colors duration-200 cursor-pointer p-2 rounded-md;
+}
+
+.answer-option:hover {
+  @apply bg-gray-100;
+}
+
+.answer-option.selected {
+  @apply bg-blue-50;
+}
+
+/* Custom radio button styling */
+.answer-option input[type="radio"] {
+  @apply appearance-none w-5 h-5 border-2 border-gray-300 rounded-full mr-3;
+  position: relative;
+}
+
+.answer-option input[type="radio"]:checked {
+  @apply border-gray-400;
+}
+
+.answer-option input[type="radio"]:checked::after {
+  content: "";
+  @apply w-2.5 h-2.5 bg-gray-600 rounded-full absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+/* Question button styles */
+.question-button {
+  @apply w-[48px] h-[66px] border-[1.5px] border-gray-300 rounded-md flex flex-col items-center justify-center transition-all duration-200 text-blue-600;
+  font-size: 16px;
+  font-family: Lato, "Lucida Sans Unicode", "Lucida Grande", sans-serif;
+  padding: 4px;
+  margin: 2px;
+}
+
+
+.question-button:hover {
+  @apply border-gray-400;
+}
+
+.question-button .number {
+  line-height: 1rem;
+  font-weight: 500;
+}
+
+.question-button .status {
+  font-size: 0.85rem;
+  color: #888;
+}
+
+.question-button.answered .status {
+  @apply text-gray-500;
+}
+
+/* Question pages navigation */
+.page-nav {
+  @apply grid grid-cols-5 gap-1 mb-4 border-b border-gray-200 pb-2;
+}
+
+.page-button {
+  @apply px-2 py-1 text-sm rounded-md transition-colors duration-200;
+}
+
+.page-button.active {
+  @apply bg-blue-100 text-blue-700;
+}
+
+.page-button:hover:not(.active) {
+  @apply bg-gray-100;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.hide-scrollbar {
+  -ms-overflow-style: none;  /* IE/Edge */
+  scrollbar-width: none;     /* Firefox */
+}
