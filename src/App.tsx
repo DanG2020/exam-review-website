@@ -1441,7 +1441,8 @@ function App() {
             {Array.from({ length: question.answerBoxes }).map((_, index) => (
               <div key={index} className="flex items-start space-x-2">
                 <textarea
-                  className="w-full h-32 p-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full h-32 p-3 border-2 border-gray-300 rounded-md focus:outline-none focus:border-blue-500"
+
                   placeholder="Enter your answer here..."
                   value={writtenAnswers[question.id]?.[index] || ''}
                   onChange={(e) => handleWrittenAnswer(question.id, index, e.target.value)}
