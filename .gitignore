@@ -25,3 +25,18 @@ dist-ssr
 
 # Environment files (secrets)
 .env
+.env.*
+!.env.example
+
+# build output
+dist
+dist-ssr
+
+# deps
+node_modules
+
+# OS / editor noise
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea
