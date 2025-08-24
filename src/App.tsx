@@ -1,6 +1,7 @@
 
-import React, { useState, useEffect, useRef } from 'react';
-import { Timer, Send, HelpCircle, Check, Lock } from 'lucide-react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { Timer, Send, HelpCircle, Check, Lock, X, Loader2 } from 'lucide-react';
+
 import { Switch } from '@headlessui/react';
 import emailjs from '@emailjs/browser';
 import type { QuizQuestion } from './types';
@@ -49,6 +50,188 @@ function generateQuestions(
   return questions;
 }
 
+function HelperCoach({
+  page,
+  onClose
+}: {
+  page: 'setup' | 'instructions' | 'quiz';
+  onClose: () => void;
+}) {
+  const content: Record<typeof page, { title: string; steps: string[] }> = {
+    setup: {
+      title: 'Quick Start',
+      steps: [
+        'Choose your Quiz Topic.',
+        'Toggle question types (MC / Written / Matching).',
+        'Set Questions Per Page × Number of Pages.',
+        'Optional: paste notes/sample questions.',
+        'Click “Run” to build the quiz.'
+      ]
+    },
+    instructions: {
+      title: 'Before You Start',
+      steps: [
+        'If enabled, enter the quiz password.',
+        'Review the time limit and details.',
+        'Click “Start Quiz”.'
+      ]
+    },
+    quiz: {
+      title: 'During the Quiz',
+      steps: [
+        'Use the left sidebar to jump to questions.',
+        'Answer, then use Next/Previous Page.',
+        'Click “Submit Quiz” for score & explanations.'
+      ]
+    }
+  };
+
+  const c = content[page];
+
+  // --- DRAG STATE ---
+  const boxRef = React.useRef<HTMLDivElement | null>(null);
+  const dragOffsetRef = React.useRef({ x: 0, y: 0 });
+  const [dragging, setDragging] = React.useState(false);
+
+  // Bigger by ~1.3–1.5× (wider + roomier paddings)
+  const BOX_WIDTH = 360; // px
+
+  // Initial position: bottom-left-ish, or last saved
+  const [pos, setPos] = React.useState<{ x: number; y: number }>(() => {
+    try {
+      const saved = localStorage.getItem('coachPos');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    const left = 16;
+    const top = typeof window !== 'undefined'
+      ? Math.max(16, window.innerHeight - 320)
+      : 100;
+    return { x: left, y: top };
+  });
+
+  // Persist position
+  React.useEffect(() => {
+    try { localStorage.setItem('coachPos', JSON.stringify(pos)); } catch {}
+  }, [pos]);
+
+  // Clamp inside viewport on resize
+  React.useEffect(() => {
+    function clampToViewport() {
+      const w = boxRef.current?.offsetWidth ?? BOX_WIDTH;
+      const h = boxRef.current?.offsetHeight ?? 240;
+      const maxX = Math.max(8, window.innerWidth - w - 8);
+      const maxY = Math.max(8, window.innerHeight - h - 8);
+      setPos(p => ({
+        x: Math.min(Math.max(8, p.x), maxX),
+        y: Math.min(Math.max(8, p.y), maxY)
+      }));
+    }
+    window.addEventListener('resize', clampToViewport);
+    return () => window.removeEventListener('resize', clampToViewport);
+  }, []);
+
+  // Drag handlers (mouse + touch)
+  function startDrag(clientX: number, clientY: number) {
+    dragOffsetRef.current = { x: clientX - pos.x, y: clientY - pos.y };
+    setDragging(true);
+  }
+
+  function onMouseDown(e: React.MouseEvent) {
+    e.preventDefault();
+    startDrag(e.clientX, e.clientY);
+  }
+  function onTouchStart(e: React.TouchEvent) {
+    const t = e.touches[0];
+    if (!t) return;
+    startDrag(t.clientX, t.clientY);
+  }
+
+  React.useEffect(() => {
+    function moveTo(clientX: number, clientY: number) {
+      const w = boxRef.current?.offsetWidth ?? BOX_WIDTH;
+      const h = boxRef.current?.offsetHeight ?? 240;
+      const maxX = window.innerWidth - w - 8;
+      const maxY = window.innerHeight - h - 8;
+
+      let nx = clientX - dragOffsetRef.current.x;
+      let ny = clientY - dragOffsetRef.current.y;
+
+      // Clamp
+      nx = Math.max(8, Math.min(nx, maxX));
+      ny = Math.max(8, Math.min(ny, maxY));
+
+      setPos({ x: nx, y: ny });
+    }
+
+    function onMouseMove(e: MouseEvent) {
+      if (!dragging) return;
+      e.preventDefault();
+      moveTo(e.clientX, e.clientY);
+    }
+    function onTouchMove(e: TouchEvent) {
+      if (!dragging) return;
+      const t = e.touches[0];
+      if (!t) return;
+      e.preventDefault();
+      moveTo(t.clientX, t.clientY);
+    }
+    function endDrag() {
+      if (dragging) setDragging(false);
+    }
+
+    window.addEventListener('mousemove', onMouseMove, { passive: false });
+    window.addEventListener('mouseup', endDrag);
+    window.addEventListener('touchmove', onTouchMove, { passive: false });
+    window.addEventListener('touchend', endDrag);
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove as any);
+      window.removeEventListener('mouseup', endDrag as any);
+      window.removeEventListener('touchmove', onTouchMove as any);
+      window.removeEventListener('touchend', endDrag as any);
+    };
+  }, [dragging]);
+
+  return (
+    <div
+      ref={boxRef}
+      className="fixed z-[70] select-none"
+      style={{ left: pos.x, top: pos.y, width: BOX_WIDTH }}
+    >
+      <div className="bg-white border shadow-2xl rounded-2xl overflow-hidden">
+        {/* Draggable header */}
+        <div
+          className={`flex items-center justify-between px-4 py-3 border-b cursor-move ${dragging ? 'bg-gray-50' : ''}`}
+          onMouseDown={onMouseDown}
+          onTouchStart={onTouchStart}
+          title="Drag me"
+        >
+          <div className="font-semibold text-base">{c.title}</div>
+          <button
+            onClick={onClose}
+            className="p-1 rounded hover:bg-gray-100"
+            title="Don’t show again"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Bigger body */}
+        <div className="p-4 text-[0.98rem] space-y-3">
+          {c.steps.map((s, i) => (
+            <div key={i} className="flex gap-3">
+              <div className="mt-[2px] min-w-[20px] h-[20px] rounded-full border flex items-center justify-center text-[11px]">
+                {i + 1}
+              </div>
+              <div>{s}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 function App() {
   const [currentPage, setCurrentPage] = useState<'setup' | 'instructions' | 'quiz'>('setup');
   const [isQuizStarted, setIsQuizStarted] = useState(false);
@@ -57,9 +240,9 @@ function App() {
   const [timeLimit, setTimeLimit] = useState('120');
   const [timeLeft, setTimeLeft] = useState(0);
   const [attemptNumber, setAttemptNumber] = useState('1');
-  const [quizTopic, setQuizTopic] = useState('cp363');
+  const [quizTopic, setQuizTopic] = useState('');
 
-  const [questionsPerPage, setQuestionsPerPage] = useState('33');
+  const [questionsPerPage, setQuestionsPerPage] = useState('5');
   const [numberOfPages, setNumberOfPages] = useState('1');
   const [currentQuizPage, setCurrentQuizPage] = useState(1);
 
@@ -82,10 +265,34 @@ function App() {
   const [includeWrittenAnswers, setIncludeWrittenAnswers] = useState(true);
   const [includeMatching, setIncludeMatching] = useState(false);
   const [scrollTop, setScrollTop] = useState(0);
+  const [showResults, setShowResults] = useState(false);
+  const [results, setResults] = useState<{
+    total: number;
+    correct: number;
+    score: number; // percent
+    wrong: Array<{
+      question: QuizQuestion;
+      yourAnswer: any;
+      correctAnswer: any;
+      explanation?: string;
+      autoGraded: boolean; // false for written
+    }>;
+  }>({
+    total: 0,
+    correct: 0,
+    score: 0,
+    wrong: [],
+  });
 
   const [customPrompt, setCustomPrompt] = useState('');
 
-  
+  const [showCoach, setShowCoach] = useState<boolean>(() => {
+    try { return !localStorage.getItem('coachSeen'); } catch { return true; }
+  });
+  const dismissCoach = () => {
+    setShowCoach(false);
+    try { localStorage.setItem('coachSeen', '1'); } catch {}
+  };
 
   useEffect(() => {
     const container = quizContentRef.current;
@@ -157,13 +364,6 @@ function App() {
     }
   }, [currentPage]);
 
-  const quizTopics = [
-    { id: 'computer-science', name: 'Computer Science' },
-    { id: 'arm-processing', name: 'ARM Processing' },
-    { id: 'intro-perception-psychology', name: 'Intro to Perception Psychology' },
-    { id: 'managerial-accounting', name: 'Managerial Accounting' },
-    { id: 'cp363', name: 'CP363: Database Systems' }, // 👈 Add this
-  ];
 
   //const totalQuestions = parseInt(questionsPerPage) * parseInt(numberOfPages);
 /*
@@ -193,46 +393,92 @@ function App() {
   ]);
   
 */
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [genProgress, setGenProgress] = useState(0);   // 0..1
+  const [genEtaMs, setGenEtaMs] = useState(0);
+  const rafRef = useRef<number | null>(null);
+  const genStartRef = useRef<number>(0);
+
+  // simple ETA model: base + per-question, clamped
+  function estimateGenerationMs(count: number) {
+    const base = 1500;      // overhead
+    const perQ = 450;       // ~0.45s per question (tweak anytime)
+    return Math.min(base + perQ * count, 45000); // cap at 45s
+  }
+  function fmtEta(ms: number) {
+    return `${Math.max(0, Math.ceil(ms / 1000))}s`;
+  }
+
+  // cleanup rAF if component unmounts
+  useEffect(() => {
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  }, []);
+
+
 
   const handleStartQuiz = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsQuizStarted(true);
+    if (isGenerating) return; // guard double-clicks
+    setIsGenerating(true);
+    setGenProgress(0);
 
-    // 1) decide how many to generate (use your sliders)
-    const totalQuestions = parseInt(questionsPerPage) * parseInt(numberOfPages);
+    // exact total = Questions Per Page × Number of Pages
+    const totalQuestions = parseInt(questionsPerPage, 10) * parseInt(numberOfPages, 10);
 
-    // 2) decide allowed types from toggles
+    // allowed types from toggles
     const allowedTypes = [
       includeMultipleChoice && 'multiple-choice',
       includeWrittenAnswers && 'written',
       includeMatching && 'matching',
     ].filter(Boolean) as Array<'multiple-choice' | 'written' | 'matching'>;
 
-    // 3) build the prompt (topic + count + allowed types + user reference)
+    const topicLabel = (quizTopic.trim() || 'this subject');
+
+    // ---- start progress animation
+    const eta = estimateGenerationMs(totalQuestions);
+    setGenEtaMs(eta);
+    genStartRef.current = performance.now();
+    const tick = () => {
+      const elapsed = performance.now() - genStartRef.current;
+      // Animate to 90% by ETA; final 10% completes when network returns
+      const pct = Math.min(0.9, elapsed / eta);
+      setGenProgress(pct);
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    // ----
+
     const prompt = buildPrompt({
-      topic: quizTopic === 'cp363'
-        ? 'Database Systems (SQL, normalization, transactions, indexing)'
-        : 'Java (core: OOP, collections, exceptions, generics, JVM, threads)',
+      topic: topicLabel,
       count: totalQuestions,
       allowedTypes,
-      reference: customPrompt, // user-pasted notes / practice problems
+      reference: customPrompt,
     });
 
-    // 4) call GPT with the *built* prompt
-    const generated = await generateQuizQuestions(prompt, {
-      count: totalQuestions,
-      allowedTypes,
-    });
+    try {
+      const generated = await generateQuizQuestions(prompt, {
+        count: totalQuestions,
+        allowedTypes,
+        topic: topicLabel,
+        enforceExactCount: true,
+      });
 
-    // 5) safety: enforce types & count, then re-index IDs 1..N
-    const filtered = generated
-      .filter(q => allowedTypes.includes(q.type as any))
-      .slice(0, totalQuestions)
-      .map((q, i) => ({ ...q, id: i + 1 }));
-
-    setQuestions(filtered);
-    setCurrentPage('instructions');
+      setQuestions(generated);
+      setCurrentPage('instructions');
+    } finally {
+      // finish progress smoothly
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      setGenProgress(1);
+      setTimeout(() => {
+        setIsGenerating(false);
+        setGenProgress(0); // reset for next time
+      }, 400); // tiny delay so users see it complete
+    }
   };
+
+
 
   const handleBeginQuiz = async () => {
     if (requirePassword && quizPassword) {
@@ -312,6 +558,79 @@ function App() {
     const remainingSeconds = seconds % 60;
     return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
   };
+
+  function arraysEqual(a: any[] = [], b: any[] = []) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+  }
+
+  function handleSubmitQuiz() {
+    const wrong: Array<{
+      question: QuizQuestion;
+      yourAnswer: any;
+      correctAnswer: any;
+      explanation?: string;
+      autoGraded: boolean;
+    }> = [];
+    let correctCount = 0;
+
+    for (const q of questions) {
+      if (q.type === 'multiple-choice') {
+        const your = selectedAnswers[q.id];
+        const correct = (q as any).correctIndex;
+        const isCorrect = typeof correct === 'number' && your === correct;
+        if (!isCorrect) {
+          wrong.push({
+            question: q,
+            yourAnswer: typeof your === 'number' ? (q as any).options?.[your] : undefined,
+            correctAnswer: typeof correct === 'number' ? (q as any).options?.[correct] : undefined,
+            explanation: (q as any).explanation,
+            autoGraded: true,
+          });
+        } else {
+          correctCount++;
+        }
+      } else if (q.type === 'matching') {
+        const your = matchingAnswers[q.id] || [];
+        const correct = (q as any).correctMatches || [];
+        const isCorrect = arraysEqual(your, correct);
+        if (!isCorrect) {
+          wrong.push({
+            question: q,
+            yourAnswer: your,
+            correctAnswer: correct,
+            explanation: (q as any).explanation,
+            autoGraded: true,
+          });
+        } else {
+          correctCount++;
+        }
+      } else if (q.type === 'written' || q.type === 'written-single' || q.type === 'written-dual') {
+        // Don’t auto-grade written; show “needs manual review” + sample solution if provided
+        const your = writtenAnswers[q.id] || [];
+        wrong.push({
+          question: q,
+          yourAnswer: your,
+          correctAnswer: (q as any).expectedAnswers,
+          explanation: (q as any).explanation,
+          autoGraded: false,
+        });
+      }
+    }
+
+    const totalAutoGradable = questions.filter(q => q.type === 'multiple-choice' || q.type === 'matching').length;
+    const score = totalAutoGradable === 0 ? 0 : Math.round((correctCount / totalAutoGradable) * 100);
+
+    setResults({
+      total: questions.length,
+      correct: correctCount,
+      score,
+      wrong,
+    });
+    setShowResults(true);
+    setCurrentPage('quiz'); // keep page, just overlay results
+  }
 
   const renderQuestion = (question: QuizQuestion) => {
     switch (question.type) {
@@ -499,19 +818,19 @@ function App() {
               <label htmlFor="quizTopic" className="block text-sm font-medium text-gray-700 mb-1">
                 Quiz Topic
               </label>
-              <select
+              <input
+                type="text"
                 id="quizTopic"
                 value={quizTopic}
                 onChange={(e) => setQuizTopic(e.target.value)}
                 required
+                autoComplete="off"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {quizTopics.map(topic => (
-                  <option key={topic.id} value={topic.id}>
-                    {topic.name}
-                  </option>
-                ))}
-              </select>
+                placeholder="Type a topic… e.g., Database Systems, Biology"
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                Tip: paste a course code or concept. The generator adapts automatically.
+              </p>
             </div>
 
             <div>
@@ -663,12 +982,32 @@ function App() {
 
             <button
               type="submit"
-              className="w-full mt-6 bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              disabled={isGenerating}
+              className={
+                "w-full mt-6 py-2 px-4 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 flex items-center justify-center " +
+                (isGenerating ? "bg-slate-400 text-white cursor-wait" : "bg-blue-600 text-white hover:bg-blue-700")
+              }
             >
-              Run
+              {isGenerating ? (<><Loader2 className="h-4 w-4 mr-2 animate-spin" />Generating…</>) : "Run"}
             </button>
+
+            {isGenerating && (
+              <div className="mt-3">
+                <div className="h-2 w-full bg-gray-200 rounded">
+                  <div
+                    className="h-2 bg-blue-600 rounded transition-[width] duration-200"
+                    style={{ width: `${Math.round(genProgress * 100)}%` }}
+                  />
+                </div>
+                <div className="mt-2 text-xs text-gray-600">
+                  Generating quiz… {Math.round(genProgress * 100)}% • ~{fmtEta(genEtaMs * (1 - genProgress))} left
+                </div>
+              </div>
+            )}
           </div>
         </form>
+        {showCoach && <HelperCoach page="setup" onClose={dismissCoach} />}
+
       </div>
     );
   }
@@ -765,6 +1104,7 @@ function App() {
             Start Quiz!
           </button>
         </div>            
+        {showCoach && <HelperCoach page="instructions" onClose={dismissCoach} />}
 
     </div>
     );
@@ -892,9 +1232,7 @@ function App() {
 
 
             <button
-              onClick={() => {
-                window.close();
-              }}
+              onClick={handleSubmitQuiz}
               className="ml-auto px-8 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
             >
               Submit Quiz
@@ -945,6 +1283,88 @@ function App() {
           </div>
         </form>
       </div>
+
+      {/* Results Panel */}
+      {showResults && (
+        <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-3xl rounded-2xl shadow-xl p-6 max-h-[85vh] overflow-y-auto">
+            <div className="flex items-start justify-between mb-4">
+              <h2 className="text-2xl font-semibold">Results & Review</h2>
+              <button
+                onClick={() => setShowResults(false)}
+                className="px-3 py-1 rounded-md border hover:bg-gray-50"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-4 mb-6">
+              <div className="p-4 border rounded-lg">
+                <div className="text-sm text-gray-500">Auto-Gradable Score</div>
+                <div className="text-2xl font-semibold">{results.score}%</div>
+              </div>
+              <div className="p-4 border rounded-lg">
+                <div className="text-sm text-gray-500">Correct (MC/Matching)</div>
+                <div className="text-2xl font-semibold">{results.correct}</div>
+              </div>
+              <div className="p-4 border rounded-lg">
+                <div className="text-sm text-gray-500">Total Questions</div>
+                <div className="text-2xl font-semibold">{results.total}</div>
+              </div>
+            </div>
+
+            {results.wrong.length === 0 ? (
+              <div className="p-4 border rounded-lg bg-green-50 text-green-800">
+                Nice! No items to review.
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {results.wrong.map((item, idx) => (
+                  <div key={idx} className="p-4 border rounded-lg">
+                    <div className="text-sm text-gray-500 mb-1">
+                      Question {item.question.id} • {item.question.type}
+                      {!item.autoGraded && ' • needs manual review'}
+                    </div>
+                    <div
+                      className="text-[1.05rem] mb-3"
+                      dangerouslySetInnerHTML={{ __html: item.question.text }}
+                    />
+                    {/* Your answer */}
+                    <div className="mb-2">
+                      <div className="text-sm font-medium text-gray-700">Your answer</div>
+                      <pre className="p-2 bg-gray-50 border rounded-md whitespace-pre-wrap">
+      {Array.isArray(item.yourAnswer) ? JSON.stringify(item.yourAnswer, null, 2) : String(item.yourAnswer ?? '—')}
+                      </pre>
+                    </div>
+                    {/* Correct answer / sample */}
+                    <div className="mb-2">
+                      <div className="text-sm font-medium text-gray-700">
+                        {item.autoGraded ? 'Correct answer' : 'Sample solution'}
+                      </div>
+                      <pre className="p-2 bg-gray-50 border rounded-md whitespace-pre-wrap">
+      {Array.isArray(item.correctAnswer) ? JSON.stringify(item.correctAnswer, null, 2) : String(item.correctAnswer ?? '—')}
+                      </pre>
+                    </div>
+                    {/* Explanation */}
+                    {item.explanation && (
+                      <div>
+                        <div className="text-sm font-medium text-gray-700">Explanation</div>
+                        <div className="p-2 bg-blue-50 border rounded-md">
+                          {item.explanation}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+
+      {showCoach && <HelperCoach page="quiz" onClose={dismissCoach} />}
+
     </div>
   );
 }

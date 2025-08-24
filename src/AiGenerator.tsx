@@ -33,9 +33,14 @@ function AiGenerator() {
         {loading ? 'Generating...' : 'Generate Questions'}
       </button>
 
-      <pre className="whitespace-pre-wrap bg-gray-100 p-4 mt-6 rounded">
-        {JSON.stringify(output, null, 2)}
-      </pre>
+      <div className="mt-6">
+        <div className="text-sm text-gray-600 mb-2">
+          Generated: <span className="font-semibold">{output.length}</span> questions
+        </div>
+        <pre className="whitespace-pre-wrap bg-gray-100 p-4 rounded">
+          {JSON.stringify(output, null, 2)}
+        </pre>
+      </div>
     </div>
   );
 }
