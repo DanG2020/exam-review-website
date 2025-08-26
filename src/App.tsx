@@ -197,8 +197,8 @@ function HelperCoach({
 
 function App() {
   const [currentPage, setCurrentPage] = useState<'setup' | 'instructions' | 'quiz'>('setup');
-  const [quizTitle, setQuizTitle] = useState('Final Exam- Requires Respondus LockDown Browser');
-  const [userName, setUserName] = useState('Daniel Gonzalez');
+  const [quizTitle, setQuizTitle] = useState('Final Exam');
+  const [userName, setUserName] = useState('');
   const [timeLimit, setTimeLimit] = useState('120');
   const [timeLeft, setTimeLeft] = useState(0);
   const [quizTopic, setQuizTopic] = useState('');
