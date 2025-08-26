@@ -1,6 +1,7 @@
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Timer, Send, HelpCircle, Check, Lock, X, Loader2 } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Send, Check, X, Loader2, Settings, HelpCircle } from 'lucide-react';
+
 
 import { Switch } from '@headlessui/react';
 import emailjs from '@emailjs/browser';
@@ -8,47 +9,9 @@ import type { QuizQuestion } from './types';
 import { generateQuizQuestions } from './gpt';
 import { buildPrompt } from './promptBuilder';
 
-
-function generateQuestions(
-  totalQuestions: number,
-  types: { multipleChoice: boolean; written: boolean; matching: boolean },
-  quizTopic: string
-): QuizQuestion[] {
-  const enabledTypes = [
-    types.multipleChoice && 'multiple-choice',
-    types.written && 'written',
-    types.matching && 'matching'
-  ].filter(Boolean) as QuizQuestion['type'][];
-
-  if (enabledTypes.length === 0) {
-    enabledTypes.push('multiple-choice');
-  }
-  
-  const questions: QuizQuestion[] = [];
+import DOMPurify from 'dompurify';
 
 
-  const remaining = totalQuestions - questions.length;
-  const questionsPerType = Math.floor(remaining / enabledTypes.length);
-  const leftovers = remaining % enabledTypes.length;
-
-  
-//enabledTypes.forEach((type, index) => {
- //   const count = index < leftovers ? questionsPerType + 1 : questionsPerType;
- //   for (let i = 0; i < count; i++) {
-  //    questions.push(generateQuestionByType(questions.length + 1, type, quizTopic));
-   // }
-  //});
-
-  // Optional shuffle
-  for (let i = questions.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [questions[i], questions[j]] = [questions[j], questions[i]];
-    questions[i].id = i + 1;
-    questions[j].id = j + 1;
-  }
-
-  return questions;
-}
 
 function HelperCoach({
   page,
@@ -234,13 +197,12 @@ function HelperCoach({
 
 function App() {
   const [currentPage, setCurrentPage] = useState<'setup' | 'instructions' | 'quiz'>('setup');
-  const [isQuizStarted, setIsQuizStarted] = useState(false);
   const [quizTitle, setQuizTitle] = useState('Final Exam- Requires Respondus LockDown Browser');
   const [userName, setUserName] = useState('Daniel Gonzalez');
   const [timeLimit, setTimeLimit] = useState('120');
   const [timeLeft, setTimeLeft] = useState(0);
-  const [attemptNumber, setAttemptNumber] = useState('1');
   const [quizTopic, setQuizTopic] = useState('');
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const [questionsPerPage, setQuestionsPerPage] = useState('5');
   const [numberOfPages, setNumberOfPages] = useState('1');
@@ -256,8 +218,7 @@ function App() {
   const [cooldownTime, setCooldownTime] = useState(0);
   const [requirePassword, setRequirePassword] = useState(false);
   const [quizPassword, setQuizPassword] = useState('');
-  const [isPasswordValid, setIsPasswordValid] = useState(false);
-  const questionRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const questionRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const quizContentRef = useRef<HTMLDivElement>(null); // 👈 Add here
 
 
@@ -286,29 +247,103 @@ function App() {
 
   const [customPrompt, setCustomPrompt] = useState('');
 
-  const [showCoach, setShowCoach] = useState<boolean>(() => {
-    try { return !localStorage.getItem('coachSeen'); } catch { return true; }
+  // ----- Setup page helpers -----
+  const MAX_REFERENCE_CHARS = 1400;
+  const referenceCount = customPrompt.length;
+  const referencePct = Math.min(100, Math.round((referenceCount / MAX_REFERENCE_CHARS) * 100));
+
+  const sampleChips: Array<{ label: string; text: string }> = [
+    {
+      label: 'Syllabus outline',
+      text:
+        'Syllabus outline:\n- Week 1: Intro & terminology\n- Week 2: Core concepts\n- Week 3: Problem types\n- Week 4: Case studies',
+    },
+    {
+      label: 'Topics list',
+      text:
+        'Topics:\n- Relational algebra\n- SQL joins & subqueries\n- Normalization\n- Indexing & query plans',
+    },
+    {
+      label: 'Glossary pairs',
+      text:
+        'Glossary (Term — Definition):\n- Primary key — Unique row identifier\n- Foreign key — References another table\n- Index — Speeds up lookups',
+    },
+    {
+      label: 'Sample questions',
+      text:
+        'Sample questions:\n1) Define normalization and provide a quick example.\n2) When would you denormalize? Why?\n3) Compare nested-loop vs hash join.',
+    },
+  ];
+
+  function addChipText(t: string) {
+    setCustomPrompt((prev) => (prev ? prev + '\n\n' + t : t));
+  }
+
+  type SubmitAction = 'grade' | 'close-tab';
+
+  const [enableHelper, setEnableHelper] = useState<boolean>(() => {
+    try { return localStorage.getItem('enableHelper') !== '0'; } catch { return true; }
   });
+
+  const [submitAction, setSubmitAction] = useState<SubmitAction>(() => {
+    try { return (localStorage.getItem('submitAction') as SubmitAction) || 'grade'; } catch { return 'grade'; }
+  });
+
+  // When user picks settings, persist them
+  useEffect(() => {
+    try { localStorage.setItem('enableHelper', enableHelper ? '1' : '0'); } catch {}
+    if (!enableHelper) setShowCoach(false);
+  }, [enableHelper]);
+
+  useEffect(() => {
+    try { localStorage.setItem('submitAction', submitAction); } catch {}
+  }, [submitAction]);
+
+  // Replace your old dismissCoach with open/dismiss that respect enableHelper
+  const openCoach = () => {
+    if (!enableHelper) return;
+    setShowCoach(true);
+    try { localStorage.removeItem('coachSeen'); } catch {}
+  };
   const dismissCoach = () => {
     setShowCoach(false);
     try { localStorage.setItem('coachSeen', '1'); } catch {}
   };
 
+  // Show a super-simple screen if we can’t close the tab (browser restriction)
+  const [hardSubmitted, setHardSubmitted] = useState(false);
+
+
+  const [showCoach, setShowCoach] = useState<boolean>(() => {
+    try {
+      const helperOn = localStorage.getItem('enableHelper') !== '0';
+      const seen = !!localStorage.getItem('coachSeen');
+      return helperOn && !seen;
+    } catch { return true; }
+  });
+
+  useEffect(() => {
+    try {
+      const seen = !!localStorage.getItem('coachSeen');
+      setShowCoach(enableHelper && !seen);
+    } catch {
+      setShowCoach(enableHelper);
+    }
+  }, [currentPage, enableHelper]);
+
+
   useEffect(() => {
     const container = quizContentRef.current;
     if (!container) return;
-  
-    const handleScroll = () => {
-      setScrollTop(container.scrollTop);
-    };
-  
+    const handleScroll = () => setScrollTop(container.scrollTop);
     container.addEventListener('scroll', handleScroll);
     return () => container.removeEventListener('scroll', handleScroll);
   }, [currentPage]);
+
   
 
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout>;
+    let timer: ReturnType<typeof setInterval>;
 
     
     if (currentPage === 'quiz' && timeLeft > 0) {
@@ -332,7 +367,7 @@ function App() {
 
   // Add new useEffect for chat cooldown
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout>;
+    let timer: ReturnType<typeof setInterval>;
 
     
     if (cooldownTime > 0) {
@@ -467,40 +502,48 @@ function App() {
 
       setQuestions(generated);
       setCurrentPage('instructions');
+
+    } catch (e: any) {
+      console.error(e);
+      alert(`Quiz generation failed:\n${e?.message ?? e}`);
+      // OPTIONAL: don’t fall back to filler; keep the user on setup page
+      return;
+
     } finally {
-      // finish progress smoothly
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       setGenProgress(1);
       setTimeout(() => {
         setIsGenerating(false);
-        setGenProgress(0); // reset for next time
-      }, 400); // tiny delay so users see it complete
+        setGenProgress(0);
+      }, 400);
     }
+
   };
 
 
 
   const handleBeginQuiz = async () => {
-    if (requirePassword && quizPassword) {
+    if (requirePassword) {
+      if (!quizPassword.trim()) return; // guard
+
       try {
         await emailjs.send(
           'Lockdownrecreation',
           'template_y2t9ruc',
-          {
-            message: quizPassword,
-          },
+          { message: quizPassword },
           'BR3ar8OdLV04yWZBF'
         );
-        setIsPasswordValid(true);
-      } catch (error) {
-        console.error('Error sending password:', error);
-        return;
+        // success: continue to quiz
+      } catch (err: unknown) {
+        console.error('Error sending password:', err);
+        return; // bail if email send fails
       }
     }
-    
+
     setCurrentPage('quiz');
-    setTimeLeft(parseInt(timeLimit) * 60);
+    setTimeLeft(parseInt(timeLimit, 10) * 60);
   };
+
 
   const handleAnswerSelect = (questionId: number, answerIndex: number) => {
     setAnsweredQuestions(prev => new Set([...prev, questionId]));
@@ -509,25 +552,33 @@ function App() {
 
   const handleWrittenAnswer = (questionId: number, answerIndex: number, value: string) => {
     setAnsweredQuestions(prev => new Set([...prev, questionId]));
-    setWrittenAnswers(prev => ({
-      ...prev,
-      [questionId]: {
-        ...prev[questionId],
-        [answerIndex]: value
-      }
-    }));
+    setWrittenAnswers(prev => {
+      const next = { ...prev };
+      const arr = (next[questionId] ?? []).slice();
+      arr[answerIndex] = value;
+      next[questionId] = arr;
+      return next;
+    });
   };
 
-  const handleMatchingAnswer = (questionId: number, leftIndex: number, rightIndex: number) => {
+  const handleMatchingAnswer = (questionId: number, leftIndex: number, raw: string) => {
     setAnsweredQuestions(prev => new Set([...prev, questionId]));
-    setMatchingAnswers(prev => ({
-      ...prev,
-      [questionId]: {
-        ...prev[questionId],
-        [leftIndex]: rightIndex
+    setMatchingAnswers(prev => {
+      const next = { ...prev };
+      const arr = (next[questionId] ?? []).slice();
+
+      if (raw === '') {
+        delete arr[leftIndex];        // clear selection for this row
+      } else {
+        const rightIndex = parseInt(raw, 10);
+        if (!Number.isNaN(rightIndex)) arr[leftIndex] = rightIndex;
       }
-    }));
+
+      next[questionId] = arr;
+      return next;
+    });
   };
+
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -549,21 +600,35 @@ function App() {
     }
   };
 
-  const scrollToQuestion = (questionNumber: number) => {
-    questionRefs.current[questionNumber - 1]?.scrollIntoView({ behavior: 'smooth' });
+  const scrollToQuestion = (id: number) => {
+    const el = questionRefs.current[id];
+    const container = quizContentRef.current;
+    if (!el || !container) return;
+    container.scrollTo({ top: el.offsetTop - 16, behavior: 'smooth' });
   };
 
-  const formatTime = (seconds: number): string => {
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = seconds % 60;
-    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
-  };
 
   function arraysEqual(a: any[] = [], b: any[] = []) {
     if (a.length !== b.length) return false;
     for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
     return true;
   }
+
+  function handleSubmit() {
+    if (submitAction === 'grade') {
+      handleSubmitQuiz();
+    } else {
+      // Try to close the tab
+      // This usually only works if this tab was opened by window.open
+      try { window.close(); } catch {}
+
+      // Fallback: show a simple screen telling the user to close the tab
+      setTimeout(() => {
+        setHardSubmitted(true);
+      }, 150);
+    }
+  }
+
 
   function handleSubmitQuiz() {
     const wrong: Array<{
@@ -682,110 +747,147 @@ function App() {
           </div>
         );
 
-      case 'matching': {
-        // ✅ declare variables BEFORE returning JSX
-        const left = (question as any).leftItems ?? [];
-        const right = (question as any).rightItems ?? [];
+        case 'matching': {
+          const left: string[]  = (question as any).leftItems  ?? [];
+          const right: string[] = (question as any).rightItems ?? [];
+          const selected = matchingAnswers[question.id] ?? [];
 
-        return (
-          <div className="grid grid-cols-2 gap-8">
-            <div className="space-y-4">
-              {left.map((item: string, index: number) => (
-                <div
-                  key={index}
-                  className="flex items-center space-x-2 p-3 border border-gray-200 rounded-md"
-                >
-                  <select
-                    className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    value={matchingAnswers[question.id]?.[index] ?? ''}
-                    onChange={(e) =>
-                      handleMatchingAnswer(question.id, index, Number(e.target.value))
-                    }
-                  >
-                    <option value="">Select a match...</option>
-                    {right.map((_, optIndex: number) => (
-                      <option key={optIndex} value={optIndex}>
-                        {optIndex + 1}
-                      </option>
-                    ))}
-                  </select>
-                  <span>{item}</span>
-                </div>
-              ))}
-            </div>
-
-            <div className="space-y-4">
-              {right.map((item: string, index: number) => (
-                <div key={index} className="p-3 border border-gray-200 rounded-md">
-                  <span>
-                    {index + 1}. {item}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        );
-      }
-
-        case 'written-dual':
           return (
-            <div className="flex flex-col gap-4 w-full max-w-[300px]">
-              <div className="flex flex-row gap-2 items-start">
-                <div className="flex flex-col items-center">
-                  <input
-                    type="text"
-                    className="w-[160px] px-2 py-1 rounded-md border border-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    value={writtenAnswers[question.id]?.[0] || ''}
-                    onChange={(e) => handleWrittenAnswer(question.id, 0, e.target.value)}
-                  />
-                  <span className="text-m text-gray-800 mt-2">Answer</span>
-                </div>
-                <div className="flex flex-col items-center">
-                  <input
-                    type="text"
-                    className="w-[60px] px-2 py-1 rounded-md border border-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    value={writtenAnswers[question.id]?.[1] || ''}
-                    onChange={(e) => handleWrittenAnswer(question.id, 1, e.target.value)}
-                  />
-                  <span className="text-m text-gray-800 mt-2">Units</span>
-                </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* LEFT: picks */}
+              <div className="space-y-3">
+                {left.map((item: string, i: number) => (
+                  <div
+                    key={i}
+                    className="flex items-center justify-between gap-3 p-2 border border-gray-200 rounded-lg"
+                  >
+                    <span className="text-[1.05rem]">{item}</span>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-gray-500">Match</label>
+                      <select
+                        className="w-32 sm:w-40 px-2 py-1 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        value={(selected[i] ?? '').toString()}
+                        onChange={(e) => handleMatchingAnswer(question.id, i, e.target.value)}
+                      >
+                        <option value="">—</option>
+                        {right.map((_label: string, optIndex: number) => (
+                          <option key={optIndex} value={optIndex}>{optIndex + 1}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* RIGHT: legend */}
+              <div className="space-y-3">
+                {right.map((item: string, idx: number) => (
+                  <div key={idx} className="p-2 border border-gray-200 rounded-lg bg-gray-50 flex items-center">
+                    <span className="inline-flex items-center justify-center w-6 h-6 rounded-full border mr-3 text-sm">
+                      {idx + 1}
+                    </span>
+                    <span>{item}</span>
+                  </div>
+                ))}
               </div>
             </div>
           );
+        }
 
-          case 'written-single':
-            return (
-              <div className="flex flex-col items-start space-y-1 mt-2">
+
+      case 'written-dual':
+        return (
+          <div className="flex flex-col gap-4 w-full max-w-[300px]">
+            <div className="flex flex-row gap-2 items-start">
+              <div className="flex flex-col items-center">
                 <input
                   type="text"
+                  className="w-[160px] px-2 py-1 rounded-md border border-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   value={writtenAnswers[question.id]?.[0] || ''}
-                  onChange={(e) =>
-                    setWrittenAnswers(prev => ({
-                      ...prev,
-                      [question.id]: {
-                        ...prev[question.id],
-                        0: e.target.value
-                      }
-                    }))
-                  }
-                  className="w-[160px] h-[32px] px-3 py-1 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  onChange={(e) => handleWrittenAnswer(question.id, 0, e.target.value)}
                 />
-                <span className="px-12 text-m text-gray-600 ml-[4px]">Answer</span>
+                <span className="text-m text-gray-800 mt-2">Answer</span>
               </div>
-            );
+              <div className="flex flex-col items-center">
+                <input
+                  type="text"
+                  className="w-[60px] px-2 py-1 rounded-md border border-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  value={writtenAnswers[question.id]?.[1] || ''}
+                  onChange={(e) => handleWrittenAnswer(question.id, 1, e.target.value)}
+                />
+                <span className="text-m text-gray-800 mt-2">Units</span>
+              </div>
+            </div>
+          </div>
+        );
+
+        case 'written-single':
+          return (
+            <div className="flex flex-col items-start space-y-1 mt-2">
+              <input
+                type="text"
+                value={writtenAnswers[question.id]?.[0] || ''}
+                onChange={(e) => handleWrittenAnswer(question.id, 0, e.target.value)}
+                className="w-[160px] h-[32px] px-3 py-1 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <span className="px-12 text-m text-gray-600 ml-[4px]">Answer</span>
+            </div>
+          );
     }
     
   };
+  if (hardSubmitted) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <h1 className="text-2xl font-semibold mb-2">Quiz submitted</h1>
+          <p className="text-gray-600 mb-6">You can now close this tab.</p>
+          <button
+            onClick={() => window.close()}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+          >
+            Close tab
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (currentPage === 'setup') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        
-        <form onSubmit={handleStartQuiz} className="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
-          <h2 className="text-2xl font-semibold text-gray-800 mb-6">Quiz Setup</h2>
-          <div className="space-y-4">
+      <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white py-12 px-4">
+        <form
+          onSubmit={handleStartQuiz}
+          className="mx-auto w-full max-w-4xl rounded-2xl border border-slate-200 bg-white/90 shadow-xl backdrop-blur p-8"
+        >
+          <div className="mb-8 flex items-center justify-between">
             <div>
-              <label htmlFor="quizTitle" className="block text-sm font-medium text-gray-700 mb-1">
+              <h2 className="text-3xl font-semibold text-slate-800">Build a Quiz</h2>
+              <p className="mt-1 text-slate-500">
+                Looks nice here; the “LockDown” style stays on the instructions + exam pages.
+              </p>
+            </div>
+
+            {/* Settings toolbar button (Setup page) */}
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-slate-700 hover:bg-slate-50"
+              aria-label="Open settings"
+              title="Settings"
+            >
+              <Settings className="h-5 w-5" />
+              <span className="hidden sm:inline">Settings</span>
+            </button>
+          </div>
+
+
+          
+
+          {/* Basics */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label htmlFor="quizTitle" className="block text-sm font-medium text-slate-700 mb-1">
                 Quiz Title
               </label>
               <input
@@ -794,13 +896,13 @@ function App() {
                 value={quizTitle}
                 onChange={(e) => setQuizTitle(e.target.value)}
                 required
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 rounded-md border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="Enter quiz title"
               />
             </div>
 
             <div>
-              <label htmlFor="userName" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="userName" className="block text-sm font-medium text-slate-700 mb-1">
                 Your Name
               </label>
               <input
@@ -809,13 +911,13 @@ function App() {
                 value={userName}
                 onChange={(e) => setUserName(e.target.value)}
                 required
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 rounded-md border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="Enter your name"
               />
             </div>
 
-            <div>
-              <label htmlFor="quizTopic" className="block text-sm font-medium text-gray-700 mb-1">
+            <div className="md:col-span-2">
+              <label htmlFor="quizTopic" className="block text-sm font-medium text-slate-700 mb-1">
                 Quiz Topic
               </label>
               <input
@@ -825,16 +927,19 @@ function App() {
                 onChange={(e) => setQuizTopic(e.target.value)}
                 required
                 autoComplete="off"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Type a topic… e.g., Database Systems, Biology"
+                className="w-full px-3 py-2 rounded-md border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Type any topic… e.g., Database Systems, Biology, Calculus, Marketing"
               />
-              <p className="mt-1 text-xs text-gray-500">
-                Tip: paste a course code or concept. The generator adapts automatically.
+              <p className="mt-1 text-xs text-slate-500">
+                You can paste a course code or concept. The generator adapts automatically.
               </p>
             </div>
+          </div>
 
+          {/* Numbers */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
             <div>
-              <label htmlFor="questionsPerPage" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="questionsPerPage" className="block text-sm font-medium text-slate-700 mb-1">
                 Questions Per Page
               </label>
               <input
@@ -844,13 +949,13 @@ function App() {
                 onChange={(e) => setQuestionsPerPage(e.target.value)}
                 required
                 min="1"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 rounded-md border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="e.g., 5"
               />
             </div>
 
             <div>
-              <label htmlFor="numberOfPages" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="numberOfPages" className="block text-sm font-medium text-slate-700 mb-1">
                 Number of Pages
               </label>
               <input
@@ -860,13 +965,13 @@ function App() {
                 onChange={(e) => setNumberOfPages(e.target.value)}
                 required
                 min="1"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="e.g., 5"
+                className="w-full px-3 py-2 rounded-md border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="e.g., 3"
               />
             </div>
 
             <div>
-              <label htmlFor="timeLimit" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="timeLimit" className="block text-sm font-medium text-slate-700 mb-1">
                 Time Limit (minutes)
               </label>
               <input
@@ -876,147 +981,275 @@ function App() {
                 onChange={(e) => setTimeLimit(e.target.value)}
                 required
                 min="1"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Enter time limit in minutes"
+                className="w-full px-3 py-2 rounded-md border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Enter minutes"
               />
             </div>
+          </div>
 
-            <div className="flex items-center justify-between py-2 border-t border-b border-gray-200">
-              <div className="flex flex-col">
-                <span className="text-sm font-medium text-gray-900">Require Password</span>
-                <span className="text-sm text-gray-500">Students must enter a password to access the quiz</span>
-              </div>
-              <Switch
-                checked={requirePassword}
-                onChange={setRequirePassword}
-                className={`${
-                  requirePassword ? 'bg-blue-600' : 'bg-gray-200'
-                } relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2`}
-              >
-                <span className="sr-only">Require password</span>
-                <span
+          {/* Password + Toggles */}
+          <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="rounded-lg border border-slate-200 p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-medium text-slate-900">Require Password</div>
+                  <div className="text-sm text-slate-500">Students must enter a password to access the quiz</div>
+                </div>
+                <Switch
+                  checked={requirePassword}
+                  onChange={setRequirePassword}
                   className={`${
-                    requirePassword ? 'translate-x-6' : 'translate-x-1'
-                  } inline-block h-4 w-4 transform rounded-full bg-white transition-transform`}
+                    requirePassword ? 'bg-blue-600' : 'bg-slate-200'
+                  } relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2`}
+                >
+                  <span className="sr-only">Require password</span>
+                  <span
+                    className={`${
+                      requirePassword ? 'translate-x-6' : 'translate-x-1'
+                    } inline-block h-4 w-4 transform rounded-full bg-white transition-transform`}
+                  />
+                </Switch>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-slate-200 p-4">
+              <h3 className="text-sm font-medium text-slate-900 mb-3">Question Types</h3>
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-medium text-slate-900">Multiple Choice</div>
+                    <div className="text-xs text-slate-500">Questions with predefined options</div>
+                  </div>
+                  <Switch
+                    checked={includeMultipleChoice}
+                    onChange={setIncludeMultipleChoice}
+                    className={`${
+                      includeMultipleChoice ? 'bg-blue-600' : 'bg-slate-200'
+                    } relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2`}
+                  >
+                    <span
+                      className={`${
+                        includeMultipleChoice ? 'translate-x-6' : 'translate-x-1'
+                      } inline-block h-4 w-4 transform rounded-full bg-white transition-transform`}
+                    />
+                  </Switch>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-medium text-slate-900">Written Answers</div>
+                    <div className="text-xs text-slate-500">Free-form text responses</div>
+                  </div>
+                  <Switch
+                    checked={includeWrittenAnswers}
+                    onChange={setIncludeWrittenAnswers}
+                    className={`${
+                      includeWrittenAnswers ? 'bg-blue-600' : 'bg-slate-200'
+                    } relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2`}
+                  >
+                    <span
+                      className={`${
+                        includeWrittenAnswers ? 'translate-x-6' : 'translate-x-1'
+                      } inline-block h-4 w-4 transform rounded-full bg-white transition-transform`}
+                    />
+                  </Switch>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-medium text-slate-900">Matching</div>
+                    <div className="text-xs text-slate-500">Match items from two columns</div>
+                  </div>
+                  <Switch
+                    checked={includeMatching}
+                    onChange={setIncludeMatching}
+                    className={`${
+                      includeMatching ? 'bg-blue-600' : 'bg-slate-200'
+                    } relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2`}
+                  >
+                    <span
+                      className={`${
+                        includeMatching ? 'translate-x-6' : 'translate-x-1'
+                      } inline-block h-4 w-4 transform rounded-full bg-white transition-transform`}
+                    />
+                  </Switch>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Course Material */}
+          <div className="mt-6">
+            <label htmlFor="customPrompt" className="block text-sm font-medium text-slate-700 mb-1">
+              Course Material (optional)
+            </label>
+            <p className="text-xs text-slate-500 mb-2">
+              Paste anything helpful: <span className="font-medium">syllabus & learning outcomes, topic list, glossary,
+              textbook summaries, grading rubric, or sample questions.</span>
+            </p>
+
+            {/* Quick insert chips */}
+            <div className="flex flex-wrap gap-2 mb-3">
+              {sampleChips.map((chip) => (
+                <button
+                  key={chip.label}
+                  type="button"
+                  onClick={() => addChipText(chip.text)}
+                  className="px-2.5 py-1 text-xs rounded-full border border-slate-300 hover:bg-slate-50"
+                  title="Insert template"
+                >
+                  {chip.label}
+                </button>
+              ))}
+            </div>
+
+            <textarea
+              id="customPrompt"
+              value={customPrompt}
+              onChange={(e) => setCustomPrompt(e.target.value)}
+              placeholder="e.g., Topics: ER diagrams, relational algebra, SQL joins, normalization, indexing...\nSample Q: Explain 3NF with a small example..."
+              rows={7}
+              maxLength={MAX_REFERENCE_CHARS}
+              className="w-full px-3 py-2 rounded-md border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+
+            {/* Counter + progress */}
+            <div className="mt-2 flex items-center justify-between">
+              <div className="h-1.5 w-48 bg-slate-200 rounded">
+                <div
+                  className={`h-1.5 rounded ${referencePct > 90 ? 'bg-red-500' : 'bg-blue-600'}`}
+                  style={{ width: `${referencePct}%` }}
                 />
-              </Switch>
-            </div>
-
-            <div className="space-y-4 pt-4">
-              <h3 className="text-lg font-medium text-gray-700">Question Types</h3>
-              
-              <div className="flex items-center justify-between py-2">
-                <div className="flex flex-col">
-                  <span className="text-sm font-medium text-gray-900">Multiple Choice</span>
-                  <span className="text-sm text-gray-500">Questions with predefined options</span>
-                </div>
-                <Switch
-                  checked={includeMultipleChoice}
-                  onChange={setIncludeMultipleChoice}
-                  className={`${
-                    includeMultipleChoice ? 'bg-blue-600' : 'bg-gray-200'
-                  } relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2`}
-                >
-                  <span
-                    className={`${
-                      includeMultipleChoice ? 'translate-x-6' : 'translate-x-1'
-                    } inline-block h-4 w-4 transform rounded-full bg-white transition-transform`}
-                  />
-                </Switch>
               </div>
-
-              <div className="flex items-center justify-between py-2">
-                <div className="flex flex-col">
-                  <span className="text-sm font-medium text-gray-900">Written Answers</span>
-                  <span className="text-sm text-gray-500">Free-form text responses</span>
-                </div>
-                <Switch
-                  checked={includeWrittenAnswers}
-                  onChange={setIncludeWrittenAnswers}
-                  className={`${
-                    includeWrittenAnswers ? 'bg-blue-600' : 'bg-gray-200'
-                  } relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2`}
-                >
-                  <span
-                    className={`${
-                      includeWrittenAnswers ? 'translate-x-6' : 'translate-x-1'
-                    } inline-block h-4 w-4 transform rounded-full bg-white transition-transform`}
-                  />
-                </Switch>
-              </div>
-
-              <div className="flex items-center justify-between py-2">
-                <div className="flex flex-col">
-                  <span className="text-sm font-medium text-gray-900">Matching</span>
-                  <span className="text-sm text-gray-500">Match items from two columns</span>
-                </div>
-                <Switch
-                  checked={includeMatching}
-                  onChange={setIncludeMatching}
-                  className={`${
-                    includeMatching ? 'bg-blue-600' : 'bg-gray-200'
-                  } relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2`}
-                >
-                  <span
-                    className={`${
-                      includeMatching ? 'translate-x-6' : 'translate-x-1'
-                    } inline-block h-4 w-4 transform rounded-full bg-white transition-transform`}
-                  />
-                </Switch>
-              </div>
+              <span className={`text-xs ${referencePct > 90 ? 'text-red-600' : 'text-slate-500'}`}>
+                {referenceCount}/{MAX_REFERENCE_CHARS} characters
+              </span>
             </div>
-            
-            <div>
-              <label htmlFor="customPrompt" className="block text-sm font-medium text-gray-700 mb-1">
-                Paste Sample Questions or Notes
-              </label>
-              <textarea
-                id="customPrompt"
-                value={customPrompt}
-                onChange={(e) => setCustomPrompt(e.target.value)}
-                placeholder="Enter sample content like notes, textbook summaries, or sample questions..."
-                rows={6}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
+          </div>
+          
 
+          {/* Run */}
+          <div className="mt-8">
             <button
               type="submit"
               disabled={isGenerating}
               className={
-                "w-full mt-6 py-2 px-4 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 flex items-center justify-center " +
-                (isGenerating ? "bg-slate-400 text-white cursor-wait" : "bg-blue-600 text-white hover:bg-blue-700")
+                'w-full py-3 rounded-md font-medium flex items-center justify-center ' +
+                (isGenerating
+                  ? 'bg-slate-400 text-white cursor-wait'
+                  : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700')
               }
             >
-              {isGenerating ? (<><Loader2 className="h-4 w-4 mr-2 animate-spin" />Generating…</>) : "Run"}
+              {isGenerating ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Generating…
+                </>
+              ) : (
+                'Run'
+              )}
             </button>
 
             {isGenerating && (
               <div className="mt-3">
-                <div className="h-2 w-full bg-gray-200 rounded">
+                <div className="h-2 w-full bg-slate-200 rounded">
                   <div
                     className="h-2 bg-blue-600 rounded transition-[width] duration-200"
                     style={{ width: `${Math.round(genProgress * 100)}%` }}
                   />
                 </div>
-                <div className="mt-2 text-xs text-gray-600">
+                <div className="mt-2 text-xs text-slate-600">
                   Generating quiz… {Math.round(genProgress * 100)}% • ~{fmtEta(genEtaMs * (1 - genProgress))} left
                 </div>
               </div>
             )}
           </div>
         </form>
+
+        {/* Settings Modal */}
+        {settingsOpen && (
+          <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl">
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-lg font-semibold">Settings</h3>
+                <button
+                  onClick={() => setSettingsOpen(false)}
+                  className="rounded-md border px-2 py-1 hover:bg-gray-50"
+                >
+                  Close
+                </button>
+              </div>
+
+              {/* Helper Agent Toggle */}
+              <div className="flex items-center justify-between py-3">
+                <div className="mr-4">
+                  <div className="text-sm font-medium text-gray-900">Helper Agent</div>
+                  <div className="text-sm text-gray-500">Show the floating tips box on all pages.</div>
+                </div>
+                <Switch
+                  checked={enableHelper}
+                  onChange={setEnableHelper}
+                  className={`${enableHelper ? 'bg-blue-600' : 'bg-gray-200'} relative inline-flex h-6 w-11 items-center rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2`}
+                >
+                  <span className={`${enableHelper ? 'translate-x-6' : 'translate-x-1'} inline-block h-4 w-4 transform rounded-full bg-white transition-transform`} />
+                </Switch>
+              </div>
+
+              {/* Submit behavior */}
+              <div className="mt-4">
+                <div className="text-sm font-medium text-gray-900 mb-2">On Submit</div>
+                <label className="mb-2 flex cursor-pointer items-center gap-2 rounded-md border p-2 hover:bg-gray-50">
+                  <input
+                    type="radio"
+                    name="submitAction"
+                    checked={submitAction === 'grade'}
+                    onChange={() => setSubmitAction('grade')}
+                  />
+                  <span className="text-sm text-gray-700">Grade the quiz (show results)</span>
+                </label>
+                <label className="flex cursor-pointer items-center gap-2 rounded-md border p-2 hover:bg-gray-50">
+                  <input
+                    type="radio"
+                    name="submitAction"
+                    checked={submitAction === 'close-tab'}
+                    onChange={() => setSubmitAction('close-tab')}
+                  />
+                  <span className="text-sm text-gray-700">Close tab immediately</span>
+                </label>
+                <p className="mt-2 text-xs text-gray-500">
+                  Note: most browsers only let scripts close tabs they opened. If closing is blocked, a “Quiz submitted” screen will appear.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {showCoach && <HelperCoach page="setup" onClose={dismissCoach} />}
+
+        {enableHelper && !showCoach && (
+          <button
+            type="button"
+            onClick={() => setShowCoach(true)}
+            className="fixed bottom-4 left-4 z-[80] inline-flex h-10 w-10 items-center justify-center rounded-full border bg-white shadow hover:bg-gray-50"
+            title="Show help"
+            aria-label="Show help"
+          >
+            <HelpCircle className="h-5 w-5" />
+          </button>
+        )}
 
       </div>
     );
   }
 
+
   if (currentPage === 'instructions') {
     return (
       <div className="flex flex-col h-screen overflow-hidden">
         {/* Sticky Brightspace Header */}
-        <div className="sticky top-0 z-50 bg-white">
+        <div className="sticky top-0 z-50 bg-white relative">
+
           <div className="sticky top-0 z-50 w-full bg-white">
             <img
               src="/mylsbanner.png"
@@ -1024,6 +1257,7 @@ function App() {
               className="w-full h-auto object-contain block"
             />
           </div>
+
         </div>
     
         {/* Scrollable Content BELOW the sticky header */}
@@ -1081,9 +1315,16 @@ function App() {
 
           {/* QUIZ REQUIREMENTS */}
           <h2 className="text-[30px] font-normal mb-2">Quiz Requirements</h2>
-          <p className="text-[16x] font-semibold text-gray-600 mt-6 mb-4">A password is required to start your attempt.</p>
-          <div className="flex items-center gap-4 mb-4">
-            <label htmlFor="quizPassword" className="font-semibold text-[.95rem]">Quiz password:</label>
+
+          {requirePassword ? (
+            <>
+              <p className="text-[16px] font-semibold text-gray-600 mt-6 mb-4">
+                A password is required to start your attempt.
+              </p>
+              <div className="flex items-center gap-4 mb-4">
+                <label htmlFor="quizPassword" className="font-semibold text-[.95rem]">Quiz password:</label>
+
+            
             <input
               type="text"
               id="quizPassword"
@@ -1092,6 +1333,10 @@ function App() {
               className="px-3 py-2 border border-gray-300 rounded-md w-[250px] focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
             />
           </div>
+        </>
+      ) : (
+        <p className="text-[16px] text-gray-600 mt-6 mb-4">No password required.</p>
+      )}
           <button
             onClick={handleBeginQuiz}
             disabled={requirePassword && !quizPassword}
@@ -1105,6 +1350,77 @@ function App() {
           </button>
         </div>            
         {showCoach && <HelperCoach page="instructions" onClose={dismissCoach} />}
+        {enableHelper && !showCoach && (
+          <button
+            type="button"
+            onClick={() => setShowCoach(true)}
+            className="fixed bottom-4 left-4 z-[80] inline-flex h-10 w-10 items-center justify-center rounded-full border bg-white shadow hover:bg-gray-50"
+            title="Show help"
+            aria-label="Show help"
+          >
+            <HelpCircle className="h-5 w-5" />
+          </button>
+        )}
+
+        {/* Settings Modal (Instructions page) */}
+        {settingsOpen && (
+          <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl">
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-lg font-semibold">Settings</h3>
+                <button
+                  onClick={() => setSettingsOpen(false)}
+                  className="rounded-md border px-2 py-1 hover:bg-gray-50"
+                >
+                  Close
+                </button>
+              </div>
+
+              {/* Helper Agent Toggle */}
+              <div className="flex items-center justify-between py-3">
+                <div className="mr-4">
+                  <div className="text-sm font-medium text-gray-900">Helper Agent</div>
+                  <div className="text-sm text-gray-500">Show the floating tips box on all pages.</div>
+                </div>
+                <Switch
+                  checked={enableHelper}
+                  onChange={setEnableHelper}
+                  className={`${enableHelper ? 'bg-blue-600' : 'bg-gray-200'} relative inline-flex h-6 w-11 items-center rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2`}
+                >
+                  <span className={`${enableHelper ? 'translate-x-6' : 'translate-x-1'} inline-block h-4 w-4 transform rounded-full bg-white transition-transform`} />
+                </Switch>
+              </div>
+
+              {/* Submit behavior */}
+              <div className="mt-4">
+                <div className="text-sm font-medium text-gray-900 mb-2">On Submit</div>
+                <label className="mb-2 flex cursor-pointer items-center gap-2 rounded-md border p-2 hover:bg-gray-50">
+                  <input
+                    type="radio"
+                    name="submitAction"
+                    checked={submitAction === 'grade'}
+                    onChange={() => setSubmitAction('grade')}
+                  />
+                  <span className="text-sm text-gray-700">Grade the quiz (show results)</span>
+                </label>
+                <label className="flex cursor-pointer items-center gap-2 rounded-md border p-2 hover:bg-gray-50">
+                  <input
+                    type="radio"
+                    name="submitAction"
+                    checked={submitAction === 'close-tab'}
+                    onChange={() => setSubmitAction('close-tab')}
+                  />
+                  <span className="text-sm text-gray-700">Close tab immediately</span>
+                </label>
+                <p className="mt-2 text-xs text-gray-500">
+                  Note: most browsers only let scripts close tabs they opened. If closing is blocked, a “Quiz submitted” screen will appear.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+
 
     </div>
     );
@@ -1128,6 +1444,8 @@ function App() {
         {quizTitle}
       </h1>
       <div className="flex items-center gap-3 mr-[100px]">
+
+
         <svg width="18" height="18" viewBox="0 0 36 36" className="transform -rotate-90">
           <circle cx="18" cy="18" r="16" stroke="#E5E7EB" strokeWidth="6" fill="none" />
           <circle cx="18" cy="18" r="16" stroke="#3B82F6" strokeWidth="6" fill="none"
@@ -1193,12 +1511,13 @@ function App() {
               (currentQuizPage - 1) * parseInt(questionsPerPage),
               currentQuizPage * parseInt(questionsPerPage)
             )
-            .map((question, index) => {
-              const absoluteIndex = (currentQuizPage - 1) * parseInt(questionsPerPage) + index;
+            .map((question) => {
+              const hasHTML = /<\/?[a-z][\s\S]*>/i.test(question.text ?? '');
               return (
                 <div
                   key={question.id}
-                  ref={(el) => (questionRefs.current[absoluteIndex] = el)}
+                  ref={(el) => (questionRefs.current[question.id] = el)}
+
                   className="mt-8 mb-12"
                   >
                   <h2 className="text-xl font-semibold mb-3">
@@ -1207,7 +1526,25 @@ function App() {
                       ({question.points} point{question.points > 1 ? 's' : ''})
                     </span>
                   </h2>
-                  <p className="text-[1.25rem] leading-7 mb-6 whitespace-pre-line" dangerouslySetInnerHTML={{ __html: question.text }} />
+                  {hasHTML ? (
+                    <div
+                      className="text-[1.25rem] leading-7 mb-6"
+                      dangerouslySetInnerHTML={{
+                        __html: DOMPurify.sanitize(question.text, {
+                          ALLOWED_TAGS: [
+                            'b','i','em','strong','u','sub','sup','br',
+                            'ul','ol','li','p','code','pre'
+                          ],
+                          ALLOWED_ATTR: []
+                        })
+                      }}
+                    />
+                  ) : (
+                    <p className="text-[1.25rem] leading-7 mb-6 whitespace-pre-line">
+                      {question.text}
+                    </p>
+                  )}
+
                   {renderQuestion(question)}
                 </div>
               );
@@ -1232,11 +1569,12 @@ function App() {
 
 
             <button
-              onClick={handleSubmitQuiz}
+              onClick={handleSubmit}
               className="ml-auto px-8 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
             >
               Submit Quiz
             </button>
+
             <span className="text-gray-600 ml-4">
               {answeredQuestions.size} of {questions.length} questions saved
             </span>
@@ -1245,18 +1583,24 @@ function App() {
       </div>
   
       {/* ✅ CUSTOM SCROLLBAR goes OUTSIDE of content layout */}
-      <div className="fixed top-[184px] right-[120px] w-[8px] h-[calc(100vh-184px)] z-50">
-        <div
-          style={{
-            height: `${(quizContentRef.current?.clientHeight || 1) / (quizContentRef.current?.scrollHeight || 1) * 100}%`,
-            top: `${(scrollTop / (quizContentRef.current?.scrollHeight || 1)) * 100}%`,
-            position: 'absolute',
-            left: 0,
-            right: 0,
-          }}
-          className="bg-gray-400 rounded-full w-full transition-all"
-        />
+      <div className="fixed top-[184px] right-[120px] w-[8px] h-[calc(100vh-184px)] z-50 pointer-events-none">
+        {(() => {
+          const clientH = quizContentRef.current?.clientHeight || 1;
+          const scrollH = quizContentRef.current?.scrollHeight || 1;
+          const thumbH = (clientH / scrollH) * 100;
+          const maxScroll = Math.max(1, scrollH - clientH);
+          const trackH = Math.max(0, 100 - thumbH);
+          const topPct = Math.min(100, Math.max(0, (scrollTop / maxScroll) * trackH));
+
+          return (
+            <div
+              style={{ height: `${thumbH}%`, top: `${topPct}%`, position: 'absolute', left: 0, right: 0 }}
+              className="bg-gray-400 rounded-full w-full transition-all"
+            />
+          );
+        })()}
       </div>
+
   
       {/* Chat box */}
       <div
@@ -1364,6 +1708,77 @@ function App() {
 
 
       {showCoach && <HelperCoach page="quiz" onClose={dismissCoach} />}
+      {enableHelper && !showCoach && (
+        <button
+          type="button"
+          onClick={() => setShowCoach(true)}
+          className="fixed bottom-4 left-4 z-[80] inline-flex h-10 w-10 items-center justify-center rounded-full border bg-white shadow hover:bg-gray-50"
+          title="Show help"
+          aria-label="Show help"
+        >
+          <HelpCircle className="h-5 w-5" />
+        </button>
+      )}
+
+      {/* Settings Modal (Instructions page) */}
+      {settingsOpen && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-lg font-semibold">Settings</h3>
+              <button
+                onClick={() => setSettingsOpen(false)}
+                className="rounded-md border px-2 py-1 hover:bg-gray-50"
+              >
+                Close
+              </button>
+            </div>
+
+            {/* Helper Agent Toggle */}
+            <div className="flex items-center justify-between py-3">
+              <div className="mr-4">
+                <div className="text-sm font-medium text-gray-900">Helper Agent</div>
+                <div className="text-sm text-gray-500">Show the floating tips box on all pages.</div>
+              </div>
+              <Switch
+                checked={enableHelper}
+                onChange={setEnableHelper}
+                className={`${enableHelper ? 'bg-blue-600' : 'bg-gray-200'} relative inline-flex h-6 w-11 items-center rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2`}
+              >
+                <span className={`${enableHelper ? 'translate-x-6' : 'translate-x-1'} inline-block h-4 w-4 transform rounded-full bg-white transition-transform`} />
+              </Switch>
+            </div>
+
+            {/* Submit behavior */}
+            <div className="mt-4">
+              <div className="text-sm font-medium text-gray-900 mb-2">On Submit</div>
+              <label className="mb-2 flex cursor-pointer items-center gap-2 rounded-md border p-2 hover:bg-gray-50">
+                <input
+                  type="radio"
+                  name="submitAction"
+                  checked={submitAction === 'grade'}
+                  onChange={() => setSubmitAction('grade')}
+                />
+                <span className="text-sm text-gray-700">Grade the quiz (show results)</span>
+              </label>
+              <label className="flex cursor-pointer items-center gap-2 rounded-md border p-2 hover:bg-gray-50">
+                <input
+                  type="radio"
+                  name="submitAction"
+                  checked={submitAction === 'close-tab'}
+                  onChange={() => setSubmitAction('close-tab')}
+                />
+                <span className="text-sm text-gray-700">Close tab immediately</span>
+              </label>
+              <p className="mt-2 text-xs text-gray-500">
+                Note: most browsers only let scripts close tabs they opened. If closing is blocked, a “Quiz submitted” screen will appear.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+
 
     </div>
   );

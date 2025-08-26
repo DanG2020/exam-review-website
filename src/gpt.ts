@@ -216,18 +216,19 @@ function normalizeQuestions(raw: any[]): QuizQuestion[] {
 /* -------------------- Server call + retry -------------------- */
 
 async function callOnce(prompt: string, model: string = 'gpt-4o-mini') {
-  // Calls your serverless endpoint (see api/generate.ts)
   const resp = await fetch('/api/generate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ prompt, model }),
   });
+
+  const text = await resp.text(); // read raw
   if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    throw new Error(err?.error || `HTTP ${resp.status}`);
+    // bubble the error so UI can show it instead of silent filler
+    throw new Error(`API /api/generate ${resp.status}: ${text}`);
   }
-  const data = await resp.json();
-  let output = (data?.content ?? '[]').trim();
+
+  let output = (JSON.parse(text)?.content ?? '[]').trim();
   if (output.startsWith('```')) {
     output = output.replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
   }

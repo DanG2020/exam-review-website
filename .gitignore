@@ -7,36 +7,46 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-*.local
+# Dependencies
+node_modules/
 
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
+# Build output
+dist/
+build/
+dist-ssr/
+.out/
+.next/            # if you ever use Next.js
+.storybook-out/
+storybook-static/
+
+# Caches
+.cache/
+.parcel-cache/
+.eslintcache
+.turbo/
+.nyc_output/
+coverage/
+.rpt2_cache/
+
+# Editor / OS
 .DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+Thumbs.db
+.idea/
+.vscode/
+!.vscode/extensions.json
 
 # Environment files (secrets)
 .env
 .env.*
 !.env.example
+.env.local
+.env.*.local
 
-# build output
-dist
-dist-ssr
+# Hosting / deploy
+.vercel/
+.netlify/
 
-# deps
-node_modules
-
-# OS / editor noise
-.DS_Store
-.vscode/*
-!.vscode/extensions.json
-.idea
+# E2E & reports (optional)
+cypress/videos/
+cypress/screenshots/
+playwright-report/

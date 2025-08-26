@@ -2,16 +2,15 @@
 /// <reference types="node" />
 import OpenAI from 'openai';
 
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
     return;
   }
 
-  if (!process.env.OPENAI_API_KEY) {
-    res.status(500).json({ error: 'Missing OPENAI_API_KEY' });
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) {
+    res.status(500).json({ error: 'Missing OPENAI_API_KEY on server' });
     return;
   }
 
@@ -22,6 +21,7 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
+    const client = new OpenAI({ apiKey: key });
     const completion = await client.chat.completions.create({
       model,
       temperature: 0.7,
@@ -30,7 +30,7 @@ export default async function handler(req: any, res: any) {
         {
           role: 'system',
           content:
-            'You create quiz questions. Output ONLY a valid JSON array with the exact property names. No markdown fences or extra text.',
+            'You create quiz questions. Output ONLY a valid JSON array with the exact property names. No markdown or extra text.',
         },
         { role: 'user', content: prompt },
       ],
@@ -39,7 +39,10 @@ export default async function handler(req: any, res: any) {
     const content = completion.choices?.[0]?.message?.content ?? '[]';
     res.status(200).json({ content });
   } catch (err: any) {
-    console.error('OpenAI error:', err);
-    res.status(500).json({ error: err?.message || 'OpenAI request failed' });
+    console.error('OpenAI error:', err?.status, err?.message, err?.response?.data);
+    res.status(500).json({
+      error: err?.message || 'OpenAI request failed',
+      details: err?.response?.data ?? null,
+    });
   }
 }
