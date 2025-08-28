@@ -1,6 +1,7 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
-export const config = { runtime: 'nodejs' };
+// api/ping.ts
+export const config = { runtime: 'nodejs' } as const;
 
-export default function handler(_req: VercelRequest, res: VercelResponse) {
-  res.status(200).json({ ok: true, hasKey: !!process.env.OPENAI_API_KEY, node: process.version });
+export default function handler(req: any, res: any) {
+  // ultra-minimal; no env access, no imports
+  res.status(200).json({ ok: true, t: Date.now() });
 }

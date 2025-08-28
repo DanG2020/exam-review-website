@@ -1,6 +1,7 @@
-import OpenAI from 'openai';
+// api/generate.ts
+export const config = { runtime: 'nodejs' } as const;
 
-export const config = { runtime: 'nodejs' };
+import OpenAI from 'openai';
 
 export default async function handler(req: any, res: any) {
   try {
@@ -15,10 +16,7 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
-    // Body may be a string depending on the platform; normalize it safely
-    const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
-    const { prompt, model = 'gpt-4o-mini' } = body;
-
+    const { prompt, model = 'gpt-4o-mini' } = req.body || {};
     if (typeof prompt !== 'string' || !prompt.trim()) {
       res.status(400).json({ error: 'Missing prompt' });
       return;
@@ -33,18 +31,19 @@ export default async function handler(req: any, res: any) {
         {
           role: 'system',
           content:
-            'You create quiz questions. Output ONLY a valid JSON array with the exact property names. No markdown or extra text.'
+            'You create quiz questions. Output ONLY a valid JSON array with the exact property names. No markdown or extra text.',
         },
-        { role: 'user', content: prompt }
-      ]
+        { role: 'user', content: prompt },
+      ],
     });
 
-    res.status(200).json({ content: completion.choices?.[0]?.message?.content ?? '[]' });
+    const content = completion.choices?.[0]?.message?.content ?? '[]';
+    res.status(200).json({ content });
   } catch (err: any) {
-    console.error('API /generate error:', err?.stack || err);
+    console.error('API /api/generate failed:', err);
     res.status(500).json({
       error: err?.message || 'OpenAI request failed',
-      details: err?.response?.data ?? null
+      details: err?.response?.data ?? null,
     });
   }
 }
