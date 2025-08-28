@@ -50,3 +50,5 @@ Thumbs.db
 cypress/videos/
 cypress/screenshots/
 playwright-report/
+.vercel
+vercel.json
