@@ -1,8 +1,8 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
+import OpenAI from 'openai';
 
-export const config = { runtime: 'nodejs' }; // ✅ valid
+export const config = { runtime: 'nodejs' };
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req: any, res: any) {
   try {
     if (req.method !== 'POST') {
       res.status(405).json({ error: 'Method not allowed' });
@@ -15,15 +15,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return;
     }
 
-    const { prompt, model = 'gpt-4o-mini' } = (req.body as any) ?? {};
+    // Body may be a string depending on the platform; normalize it safely
+    const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
+    const { prompt, model = 'gpt-4o-mini' } = body;
+
     if (typeof prompt !== 'string' || !prompt.trim()) {
       res.status(400).json({ error: 'Missing prompt' });
       return;
     }
 
-    const { default: OpenAI } = await import('openai'); // dynamic import
     const client = new OpenAI({ apiKey: key });
-
     const completion = await client.chat.completions.create({
       model,
       temperature: 0.7,
@@ -32,15 +33,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         {
           role: 'system',
           content:
-            'You create quiz questions. Output ONLY a valid JSON array with the exact property names. No markdown or extra text.',
+            'You create quiz questions. Output ONLY a valid JSON array with the exact property names. No markdown or extra text.'
         },
-        { role: 'user', content: prompt },
-      ],
+        { role: 'user', content: prompt }
+      ]
     });
 
     res.status(200).json({ content: completion.choices?.[0]?.message?.content ?? '[]' });
   } catch (err: any) {
-    console.error('generate handler crash:', err?.stack || err);
-    res.status(500).json({ error: err?.message || 'Internal error' });
+    console.error('API /generate error:', err?.stack || err);
+    res.status(500).json({
+      error: err?.message || 'OpenAI request failed',
+      details: err?.response?.data ?? null
+    });
   }
 }
