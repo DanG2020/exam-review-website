@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-export const config = { runtime: 'nodejs20.x' };
+export const config = { runtime: 'nodejs' }; // ✅ valid
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
@@ -21,8 +21,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return;
     }
 
-    // dynamic import avoids any top-level bundling issues
-    const { default: OpenAI } = await import('openai');
+    const { default: OpenAI } = await import('openai'); // dynamic import
     const client = new OpenAI({ apiKey: key });
 
     const completion = await client.chat.completions.create({
@@ -39,11 +38,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ],
     });
 
-    res.status(200).json({
-      content: completion.choices?.[0]?.message?.content ?? '[]',
-    });
+    res.status(200).json({ content: completion.choices?.[0]?.message?.content ?? '[]' });
   } catch (err: any) {
-    // This shows up in the Vercel Function logs
     console.error('generate handler crash:', err?.stack || err);
     res.status(500).json({ error: err?.message || 'Internal error' });
   }
